@@ -1,0 +1,16 @@
+﻿@using PdfJSViewer.Models;
+
+@model DocumentViewModel
+
+@{
+    ViewBag.Title = "Home Page";
+}
+
+<div>
+    <div style="padding-bottom: 20px;">
+        <h2>Pdf document</h2>
+    </div>
+    <div style="max-width: 750px;">
+        @Html.Partial("Document", Model)
+    </div>
+</div>

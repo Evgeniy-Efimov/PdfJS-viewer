@@ -1,0 +1,297 @@
+﻿@using PdfJSViewer.Models;
+
+@model DocumentViewModel
+
+@{
+    var documentId = Model.DocumentId.ToString();
+    var documentPath = Model.DocumentUrl;
+}
+
+@Scripts.Render("~/bundles/pdfjs")
+
+<div style="position:relative;">
+    <div id="documentContainer@(documentId)" class="document-container">
+    </div>
+    <div style="position:absolute; top:0; margin: 5px; width:100%;">
+        <div style="position: absolute; top: 0; right:0; margin-right:20px; width: 80px;">
+            <button class="document-button document-nav-button" id="zoominbutton@(documentId)" type="button">+</button>
+            <button class="document-button document-nav-button" id="zoomoutbutton@(documentId)" type="button">-</button>
+        </div>
+    </div>
+    <div style="position:absolute; top:0; margin: 5px; width:100%;">
+        <div style="position: absolute; top: 40px; right:0; margin-right:22px; width: 40px;">
+            <a href="@documentPath" target="_blank"><button class="document-button document-nav-button-link" type="button"></button></a>
+        </div>
+    </div>
+</div>
+
+<style>
+    .document-container {
+        width: 100%;
+        height: 700px;
+        overflow: scroll;
+    }
+
+    .document-nav-button {
+        border-radius: 50%;
+        background-color: rgba(230,230,230,0.6);
+        border: 0;
+        width: 35px;
+        height: 35px;
+        font-size: 24px;
+        color: rgba(74,85,104);
+    }
+
+    .document-nav-button-link {
+        border-radius: 50%;
+        border: 0;
+        width: 35px;
+        height: 35px;
+        background-color: transparent;
+        background-image: url("../../Content/_img/external-link-doc-btn.png");
+        background-size: contain;
+        background-repeat: no-repeat;
+    }
+
+    .document-button:focus {
+        border: 0;
+        outline: none;
+    }
+
+    .document-button:hover {
+        border: 0;
+        outline: none;
+        cursor: pointer;
+    }
+
+    .document-button:active {
+        border: 0;
+        outline: none;
+    }
+</style>
+
+<script>
+    $().ready(function () {
+
+        var pdfPath@(documentId) = '@(documentPath)'; //path to pdf file
+        var pdfDefaultScale@(documentId) = 1.15; //default pdf scale for first render
+        var pdfScale@(documentId) = pdfDefaultScale@(documentId); //current pdf scale
+        var pdfMaxScale@(documentId) = 3; //max pdf scale
+        var scaleDelta@(documentId) = 0.15; //scale step
+        var pdfDocument@(documentId); //rendered pdf object
+        var pagesCount@(documentId) = 0; //pages count
+        var canvasesList@(documentId) = []; //save canvases for pages to use again after clean up on zoomin/zoomout
+        var pagesRenderedFlagList@(documentId) = []; //save render flag for each page
+        var isRenderingProcessing@(documentId) = true; //after zoom wait for render before performing actions
+        var currentScrollPosition@(documentId) = 0; //save vertical scroll position to detect scroll type
+        var isDocumentChecked@(documentId) = false; //on max scroll run checkout action once
+        var documentContainer@(documentId) = document.getElementById('documentContainer@(documentId)'); //div container of document
+        var zoomoutbutton@(documentId) = document.getElementById("zoomoutbutton@(documentId)");
+        var zoominbutton@(documentId) = document.getElementById("zoominbutton@(documentId)");
+
+        //render first 2 pages on start
+        displayDocument@(documentId)(true);
+
+        //get current canvases size for current scale
+        function getPageWidth@(documentId)() {
+            return canvasesList@(documentId)[0].width;
+        }
+
+        function getPageHeight@(documentId)() {
+            return canvasesList@(documentId)[0].height;
+        }
+
+        //display page at scroll position + previous and next pages
+        //hide other rendered pages to save memory
+        function displayCurrentPage@(documentId)(firstRender) {
+            let pagesToDisplay = [];
+            if (firstRender) {
+                pagesToDisplay.push(0); pagesToDisplay.push(1);
+            }
+            else {
+                //calculate current page number, add closest pages
+                let pageHeight = getPageHeight@(documentId)();
+                let scrollPosition = documentContainer@(documentId).scrollTop;
+                let pageNumber = Math.floor(scrollPosition / pageHeight);
+                pagesToDisplay.push(pageNumber);
+                if (pageNumber > 0) { pagesToDisplay.push(pageNumber - 1); }
+                if (pageNumber < pagesCount@(documentId) - 1) { pagesToDisplay.push(pageNumber + 1); }
+            }
+
+            let shownPagesNumbers = [];
+            let pageNumbersToHide = [];
+            let pageNumbersToShow = [];
+
+            pagesRenderedFlagList@(documentId).forEach((val, index) => {
+                if (val) { shownPagesNumbers.push(index); }
+            });
+
+            pageNumbersToHide = shownPagesNumbers.filter(number => pagesToDisplay.indexOf(number) == -1);
+            pageNumbersToShow = pagesToDisplay.filter(number => shownPagesNumbers.indexOf(number) == -1);
+
+            for (i = 0; i < pageNumbersToHide.length; i++) {
+                hidePage@(documentId)(pageNumbersToHide[i] + 1);
+                pagesRenderedFlagList@(documentId)[pageNumbersToHide[i]] = false;
+            }
+
+            for (i = 0; i < pageNumbersToShow.length; i++) {
+                displayPage@(documentId)(pageNumbersToShow[i] + 1, canvasesList@(documentId)[pageNumbersToShow[i]]);
+                pagesRenderedFlagList@(documentId)[pageNumbersToShow[i]] = true;
+            }
+        }
+
+        //prepare canvas for page for current scale
+        function prepareRenderContex@(documentId)(pageNum, canvas) {
+            pdfDocument@(documentId).getPage(pageNum).then(function getPage(page) {
+                let viewport = page.getViewport(pdfScale@(documentId));
+                let context = canvas.getContext('2d');
+                //clear canvas if already used
+                if (context) {
+                    context.clearRect(0, 0, canvas.width, canvas.height);
+                    context.beginPath();
+                }
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                pagesRenderedFlagList@(documentId).push(false);
+            });
+        }
+
+        //render page using prepared canvas
+        function displayPage@(documentId)(pageNum, canvas) {
+            pdfDocument@(documentId).getPage(pageNum).then(function getPage(page) {
+                let viewport = page.getViewport(pdfScale@(documentId));
+                let context = canvas.getContext('2d');
+                let renderContext = {
+                    canvasContext: context,
+                    viewport: viewport
+                };
+                let pageRenderingTask = page.render(renderContext);
+                //perform action after render
+                pageRenderingTask.promise.then(
+                    function pdfPageRenderCallback() {
+                        afterPageRendering@(documentId)();
+                    },
+                    function pdfPageRenderError(error) {
+
+                    }
+                );
+            });
+        }
+
+        //after first page render new width was applied
+        //set horizontal scroll at center and activate zoom buttons
+        function afterPageRendering@(documentId)() {
+            if (isRenderingProcessing@(documentId)) {
+                isRenderingProcessing@(documentId) = false;
+                centerAtHorizontal@(documentId)();
+            }
+        }
+
+        //clear rendered pages out of scroll position to save memory
+        function hidePage@(documentId)(pageNum) {
+            pdfDocument@(documentId).getPage(pageNum).then(function getPage(page) {
+                page.cleanup();
+            });
+        }
+
+        //main function for rendering document
+        function displayDocument@(documentId)(firstRender) {
+            PDFJS.getDocument(pdfPath@(documentId)).then(function getPdfHelloWorld(pdf) {
+                //it's important to save pdf object to local variable
+                pdfDocument@(documentId) = pdf;
+                pagesCount@(documentId) = pdf.numPages;
+                for (pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                    //create canvases on first render, set size
+                    if (firstRender) {
+                        let canvas = document.createElement("canvas");
+                        canvas.className = 'pdf-page-canvas';
+                        documentContainer@(documentId).appendChild(canvas);
+                        canvasesList@(documentId).push(canvas);
+                        prepareRenderContex@(documentId)(pageNum, canvas);
+                    }
+                    //use already created canvases on refresh after zoomin/zoomout
+                    //update size
+                    else {
+                        let canvas = canvasesList@(documentId)[pageNum - 1];
+                        prepareRenderContex@(documentId)(pageNum, canvas);
+                    }
+                }
+                //load pages at scroll position
+                displayCurrentPage@(documentId)(firstRender);
+            });
+        }
+
+        //resize canvases, update pages after zoomin/zoomout
+        function refreshAllPages@(documentId)() {
+            isRenderingProcessing@(documentId) = true;
+            pagesRenderedFlagList@(documentId) = [];
+            pdfDocument@(documentId).destroy();
+            displayDocument@(documentId)(false);
+        }
+
+        //set horizontal scroll at center
+        function centerAtHorizontal@(documentId)() {
+            let pageWidth = getPageWidth@(documentId)();
+            let containerWidth = $(documentContainer@(documentId)).width();
+            $(documentContainer@(documentId)).scrollLeft((pageWidth - containerWidth) / 2);
+        }
+
+        function zoomIn@(documentId)() {
+            if (isRenderingProcessing@(documentId) || pdfScale@(documentId) >= pdfMaxScale@(documentId)) {
+                return;
+            }
+            pdfScale@(documentId) = pdfScale@(documentId) + scaleDelta@(documentId);
+            refreshAllPages@(documentId)();
+        }
+
+        function zoomOut@(documentId)() {
+            if (isRenderingProcessing@(documentId) || pdfScale@(documentId) <= pdfDefaultScale@(documentId)) {
+                return;
+            }
+            pdfScale@(documentId) = pdfScale@(documentId) - scaleDelta@(documentId);
+            refreshAllPages@(documentId)();
+        }
+
+        //check if vertical scroll is max
+        function scrollBottomReached@(documentId)() {
+            let documentContainerHeight = getPageHeight@(documentId)() * pagesCount@(documentId);
+            return documentContainerHeight - documentContainer@(documentId).scrollTop <= $(documentContainer@(documentId)).outerHeight();
+        }
+
+        //load(hide) pages on scroll, check document was scrolled completely
+        function scrollAction@(documentId)() {
+            let newScrollPosition = documentContainer@(documentId).scrollTop;
+            if (isVertivalScroll@(documentId)(newScrollPosition)) {
+                displayCurrentPage@(documentId)(false);
+                if (scrollBottomReached@(documentId)() && !isDocumentChecked@(documentId)) {
+                    isDocumentChecked@(documentId) = true;
+                    markReaded();
+                }
+            }
+        }
+
+        //detect scroll event type
+        function isVertivalScroll@(documentId)(newScrollPosition) {
+            if (currentScrollPosition@(documentId) != newScrollPosition) {
+                currentScrollPosition@(documentId) = newScrollPosition;
+                return true;
+            }
+            return false;
+        }
+
+        $(documentContainer@(documentId)).scroll(function () {
+            scrollAction@(documentId)();
+        })
+
+        zoominbutton@(documentId).onclick = function () {
+            zoomIn@(documentId)();
+        }
+
+        zoomoutbutton@(documentId).onclick = function () {
+            zoomOut@(documentId)();
+        }
+
+    })
+</script>
+
